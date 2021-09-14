@@ -50,6 +50,33 @@ class PdfThumbnailModule(reactContext: ReactApplicationContext) : ReactContextBa
   }
 
   @ReactMethod
+  fun generateWithMinSide(filePath: String, page: Int, minSide: Int, promise: Promise) {
+    var parcelFileDescriptor: ParcelFileDescriptor? = null
+    var pdfRenderer: PdfRenderer? = null
+    try {
+      parcelFileDescriptor = getParcelFileDescriptor(filePath)
+      if (parcelFileDescriptor == null) {
+        promise.reject("FILE_NOT_FOUND", "File $filePath not found")
+        return
+      }
+
+      pdfRenderer = PdfRenderer(parcelFileDescriptor)
+      if (page < 0 || page >= pdfRenderer.pageCount) {
+        promise.reject("INVALID_PAGE", "Page number $page is invalid, file has ${pdfRenderer.pageCount} pages")
+        return
+      }
+
+      val result = renderPageWithMinSide(pdfRenderer, page, filePath, minSide)
+      promise.resolve(result)
+    } catch (ex: IOException) {
+      promise.reject("INTERNAL_ERROR", ex)
+    } finally {
+      pdfRenderer?.close()
+      parcelFileDescriptor?.close()
+    }
+  }
+
+  @ReactMethod
   fun generateAllPages(filePath: String, promise: Promise) {
     var parcelFileDescriptor: ParcelFileDescriptor? = null
     var pdfRenderer: PdfRenderer? = null
@@ -86,9 +113,24 @@ class PdfThumbnailModule(reactContext: ReactApplicationContext) : ReactContextBa
   }
 
   private fun renderPage(pdfRenderer: PdfRenderer, page: Int, filePath: String): WritableNativeMap {
+    return renderPageWithMinSide(pdfRenderer, page, filePath, null)
+  }
+
+  private fun renderPageWithMinSide(pdfRenderer: PdfRenderer, page: Int, filePath: String, minSide: Int?): WritableNativeMap {
     val currentPage = pdfRenderer.openPage(page)
-    val width = currentPage.width
-    val height = currentPage.height
+    val originalWidth = currentPage.width
+    val originalHeight = currentPage.height
+
+    var factor = 1.0
+    if (minSide !== null) {
+      val originalMinSide = if(originalWidth < originalHeight) originalWidth else originalHeight
+      if(originalMinSide < minSide) {
+        factor = minSide / originalMinSide.toDouble()
+      }
+    }
+    val width = (originalWidth * factor).toInt()
+    val height = (originalHeight * factor).toInt()
+
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     currentPage.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
     currentPage.close()
